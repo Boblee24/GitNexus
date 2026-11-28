@@ -1203,6 +1203,7 @@ export interface ActiveAnalyzeJob extends JobStatus {
 /** A repo's newest finished analyze job, from `GET /api/analyze`. */
 export interface AnalyzeOutcome {
   repoId: string;
+  jobId: string;
   status: 'complete' | 'failed';
   startedAt: number;
 }

@@ -222,12 +222,34 @@ describe('GET /api/analyze', () => {
 
     expect(latest).toContainEqual({
       repoId: publicRepoId('/tmp/latest-a'),
+      jobId: newer.id,
       status: 'failed',
       startedAt: 2_000,
     });
     expect(latest.filter((o: any) => o.repoId === publicRepoId('/tmp/latest-a'))).toHaveLength(1);
     // A running job is not an outcome yet.
     expect(latest.some((o: any) => o.repoId === publicRepoId('/tmp/latest-b'))).toBe(false);
+  });
+
+  it('prefers the later job when two for a repo start in the same millisecond', () => {
+    const jobs = analyzeJobs();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(5_000);
+    const first = jobs.createJob({ repoPath: '/tmp/latest-tie' });
+    jobs.updateJob(first.id, { status: 'complete' });
+    const second = jobs.createJob({ repoPath: '/tmp/latest-tie' });
+    jobs.updateJob(second.id, { status: 'failed', error: 'boom' });
+    now.mockRestore();
+
+    const { latest } = invokeList().body;
+
+    expect(latest.filter((o: any) => o.repoId === publicRepoId('/tmp/latest-tie'))).toEqual([
+      {
+        repoId: publicRepoId('/tmp/latest-tie'),
+        jobId: second.id,
+        status: 'failed',
+        startedAt: 5_000,
+      },
+    ]);
   });
 
   it('never exposes the repo URL, path or branch', () => {

@@ -2103,14 +2103,21 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
     // even for a job that started and ended between two polls.
     const latestByRepo = new Map<
       string,
-      { repoId: string; status: 'complete' | 'failed'; startedAt: number }
+      { repoId: string; jobId: string; status: 'complete' | 'failed'; startedAt: number }
     >();
     for (const job of jobManager.listJobs()) {
       if (!job.repoPath || (job.status !== 'complete' && job.status !== 'failed')) continue;
       const repoId = publicRepoId(job.repoPath);
       const known = latestByRepo.get(repoId);
-      if (!known || job.startedAt > known.startedAt) {
-        latestByRepo.set(repoId, { repoId, status: job.status, startedAt: job.startedAt });
+      // `>=`: jobs are listed oldest first, so a later job started in the same
+      // millisecond still wins.
+      if (!known || job.startedAt >= known.startedAt) {
+        latestByRepo.set(repoId, {
+          repoId,
+          jobId: job.id,
+          status: job.status,
+          startedAt: job.startedAt,
+        });
       }
     }
     res.json({ jobs, latest: [...latestByRepo.values()] });

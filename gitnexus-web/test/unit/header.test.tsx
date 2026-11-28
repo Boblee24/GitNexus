@@ -558,11 +558,43 @@ describe('Header', () => {
       expect(screen.getByTestId('repo-status-ready')).toBeInTheDocument();
 
       // A newer job for the repo starts and fails before the next poll.
-      latestOutcomes = [{ repoId: 'id-1', status: 'failed', startedAt: 5 }];
+      latestOutcomes = [{ repoId: 'id-1', jobId: 'job-later', status: 'failed', startedAt: 5 }];
       await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
 
       expect(screen.queryByTestId('repo-status-analyzing')).not.toBeInTheDocument();
       expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
+    });
+
+    it('shows Ready for a successful analysis it never saw running', async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchRepos).mockResolvedValue(repos());
+      const onReposChanged = vi.fn();
+      render(<Header availableRepos={repos()} onReposChanged={onReposChanged} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /reels/i }));
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
+
+      // A job starts and completes between two polls.
+      latestOutcomes = [{ repoId: 'id-1', jobId: 'job-unseen', status: 'complete', startedAt: 7 }];
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
+
+      const ready = screen.getByTestId('repo-status-ready');
+      expect(ready.closest('[data-testid="repo-switcher-row"]')).toHaveTextContent('repo-1');
+      expect(onReposChanged).toHaveBeenCalledWith(repos());
+    });
+
+    it('does not mark repos Ready for analyses that finished before polling began', async () => {
+      vi.useFakeTimers();
+      latestOutcomes = [{ repoId: 'id-1', jobId: 'job-unseen', status: 'complete', startedAt: 7 }];
+      render(<Header availableRepos={repos()} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /reels/i }));
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS * 2));
+
+      expect(fetchAnalyzeJobs).toHaveBeenCalledTimes(3);
+      expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
+      expect(fetchRepos).not.toHaveBeenCalled();
     });
 
     it('retries the outcome lookup after a transient failure and still shows Ready', async () => {
