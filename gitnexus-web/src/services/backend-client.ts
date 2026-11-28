@@ -1200,13 +1200,30 @@ export interface ActiveAnalyzeJob extends JobStatus {
   stopping: boolean;
 }
 
-/** List analyze jobs holding the analyze slot (the server runs one at a time). */
-export const fetchActiveAnalyzeJobs = async (): Promise<ActiveAnalyzeJob[]> => {
+/** A repo's newest finished analyze job, from `GET /api/analyze`. */
+export interface AnalyzeOutcome {
+  repoId: string;
+  status: 'complete' | 'failed';
+  startedAt: number;
+}
+
+/**
+ * `GET /api/analyze`: jobs holding the analyze slot (the server runs one at a
+ * time) and each repo's newest finished job.
+ */
+export const fetchAnalyzeJobs = async (): Promise<{
+  jobs: ActiveAnalyzeJob[];
+  latest: AnalyzeOutcome[];
+}> => {
   const response = await fetchWithTimeout(`${_backendUrl}/api/analyze`, {}, 5_000);
   await assertOk(response);
-  const { jobs } = (await response.json()) as { jobs: ActiveAnalyzeJob[] };
-  return jobs;
+  const body = (await response.json()) as { jobs: ActiveAnalyzeJob[]; latest?: AnalyzeOutcome[] };
+  return { jobs: body.jobs, latest: body.latest ?? [] };
 };
+
+/** List analyze jobs holding the analyze slot. */
+export const fetchActiveAnalyzeJobs = async (): Promise<ActiveAnalyzeJob[]> =>
+  (await fetchAnalyzeJobs()).jobs;
 
 type AnalyzeJobStatus = JobStatus & Pick<ActiveAnalyzeJob, 'repoId'>;
 

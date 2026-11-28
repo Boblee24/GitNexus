@@ -6,12 +6,17 @@ import {
   BackendError,
   deleteRepo,
   fetchActiveAnalyzeJobs,
+  fetchAnalyzeJobs,
   fetchRepos,
   getAnalyzeStatus,
   startAnalyze,
   streamAnalyzeProgress,
 } from '../../src/services/backend-client';
-import type { ActiveAnalyzeJob, BackendRepo } from '../../src/services/backend-client';
+import type {
+  ActiveAnalyzeJob,
+  AnalyzeOutcome,
+  BackendRepo,
+} from '../../src/services/backend-client';
 import { ACTIVE_ANALYZE_POLL_MS } from '../../src/hooks/useActiveAnalyzeJobs';
 
 vi.mock('../../src/hooks/useAppState', () => ({
@@ -46,6 +51,7 @@ vi.mock('../../src/services/backend-client', async (importOriginal) => {
     ...actual,
     deleteRepo: vi.fn(),
     fetchActiveAnalyzeJobs: vi.fn(),
+    fetchAnalyzeJobs: vi.fn(),
     fetchRepos: vi.fn(),
     getAnalyzeStatus: vi.fn(),
     startAnalyze: vi.fn(),
@@ -92,10 +98,20 @@ function makeRepo(index: number): BackendRepo {
   };
 }
 
+// Latest finished job per repo for the polled snapshot; tests set it as needed.
+let latestOutcomes: AnalyzeOutcome[] = [];
+
 describe('Header', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    latestOutcomes = [];
     vi.mocked(fetchActiveAnalyzeJobs).mockResolvedValue([]);
+    // The hook polls the full snapshot; tests script its running jobs through
+    // fetchActiveAnalyzeJobs and its outcomes through latestOutcomes.
+    vi.mocked(fetchAnalyzeJobs).mockImplementation(async () => ({
+      jobs: await fetchActiveAnalyzeJobs(),
+      latest: latestOutcomes,
+    }));
   });
 
   afterEach(() => {
@@ -527,6 +543,25 @@ describe('Header', () => {
       await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
 
       expect(oldLookups).toBe(3);
+      expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
+    });
+
+    it('drops Ready when a newer analysis fails between polls, unseen', async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchActiveAnalyzeJobs).mockResolvedValueOnce([runningJob()]).mockResolvedValue([]);
+      vi.mocked(getAnalyzeStatus).mockResolvedValue({ ...runningJob(), status: 'complete' });
+      vi.mocked(fetchRepos).mockResolvedValue(repos());
+      render(<Header availableRepos={repos()} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /reels/i }));
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
+      expect(screen.getByTestId('repo-status-ready')).toBeInTheDocument();
+
+      // A newer job for the repo starts and fails before the next poll.
+      latestOutcomes = [{ repoId: 'id-1', status: 'failed', startedAt: 5 }];
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
+
+      expect(screen.queryByTestId('repo-status-analyzing')).not.toBeInTheDocument();
       expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
     });
 

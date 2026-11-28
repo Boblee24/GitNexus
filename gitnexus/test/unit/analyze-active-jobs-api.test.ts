@@ -142,7 +142,7 @@ describe('GET /api/analyze', () => {
     const res = invokeList();
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ jobs: [] });
+    expect(res.body).toEqual({ jobs: [], latest: [] });
   });
 
   it('lists only running jobs, with progress', () => {
@@ -186,7 +186,7 @@ describe('GET /api/analyze', () => {
     ]);
 
     jobs.releaseChild(job.id);
-    expect(invokeList().body).toEqual({ jobs: [] });
+    expect(invokeList().body.jobs).toEqual([]);
   });
 
   it('marks a cancelled job as stopping while its worker shuts down', () => {
@@ -202,6 +202,32 @@ describe('GET /api/analyze', () => {
     expect(invokeList().body.jobs).toMatchObject([
       { id: job.id, status: 'analyzing', stopping: true },
     ]);
+  });
+
+  it("reports each repo's newest finished job, even one never seen running", () => {
+    const jobs = analyzeJobs();
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(1_000);
+    const older = jobs.createJob({ repoPath: '/tmp/latest-a' });
+    jobs.updateJob(older.id, { status: 'complete' });
+    now.mockReturnValue(2_000);
+    const newer = jobs.createJob({ repoPath: '/tmp/latest-a' });
+    jobs.updateJob(newer.id, { status: 'failed', error: 'boom' });
+    now.mockReturnValue(3_000);
+    const running = jobs.createJob({ repoPath: '/tmp/latest-b' });
+    jobs.updateJob(running.id, { status: 'analyzing' });
+    now.mockRestore();
+
+    const { latest } = invokeList().body;
+
+    expect(latest).toContainEqual({
+      repoId: publicRepoId('/tmp/latest-a'),
+      status: 'failed',
+      startedAt: 2_000,
+    });
+    expect(latest.filter((o: any) => o.repoId === publicRepoId('/tmp/latest-a'))).toHaveLength(1);
+    // A running job is not an outcome yet.
+    expect(latest.some((o: any) => o.repoId === publicRepoId('/tmp/latest-b'))).toBe(false);
   });
 
   it('never exposes the repo URL, path or branch', () => {

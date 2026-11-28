@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackendError,
-  fetchActiveAnalyzeJobs,
+  fetchAnalyzeJobs,
   getAnalyzeStatus,
   type ActiveAnalyzeJob,
+  type AnalyzeOutcome,
 } from '../services/backend-client';
 
 /** `GET /api/analyze` allows 60 requests/min per IP; 3s is 20/min for the visible tab. */
@@ -18,11 +19,14 @@ const RATE_LIMIT_FALLBACK_MS = 60_000;
  * `readyRepoIds` collects repos whose job was seen running and then completed,
  * so the repo switcher can mark them ready. Seen jobs and Ready repos survive
  * `enabled` toggling (the dropdown closing), so a job that finishes while the
- * switcher is closed is still marked Ready when it reopens.
+ * switcher is closed is still marked Ready when it reopens. The server's
+ * newest finished job per repo then has the last word, so a later failure
+ * clears Ready even if this tab never saw that job running.
  */
 export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => void) {
   const [jobs, setJobs] = useState<ActiveAnalyzeJob[]>([]);
   const [readyRepoIds, setReadyRepoIds] = useState<string[]>([]);
+  const [latest, setLatest] = useState<AnalyzeOutcome[]>([]);
   const onJobCompleteRef = useRef(onJobComplete);
   onJobCompleteRef.current = onJobComplete;
   const seenRef = useRef<ActiveAnalyzeJob[]>([]);
@@ -44,7 +48,7 @@ export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => voi
       if (inFlight || document.hidden || Date.now() < pausedUntilRef.current) return;
       inFlight = true;
       try {
-        const current = await fetchActiveAnalyzeJobs().catch((err) => {
+        const snapshot = await fetchAnalyzeJobs().catch((err) => {
           // On a 429, wait out the server's Retry-After instead of polling into
           // the limit again; the first poll after it refreshes the state.
           if (err instanceof BackendError && err.code === 'rate_limited') {
@@ -52,7 +56,9 @@ export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => voi
           }
           return null;
         });
-        if (cancelled || !current) return;
+        if (cancelled || !snapshot) return;
+        const current = snapshot.jobs;
+        setLatest(snapshot.latest);
         const finished = [
           ...unconfirmedRef.current,
           ...seenRef.current.filter((job) => !current.some((c) => c.id === job.id)),
@@ -109,5 +115,16 @@ export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => voi
     };
   }, [enabled]);
 
-  return { jobs, readyRepoIds };
+  // Ready only while the repo's newest finished job (if the server still has
+  // it) completed.
+  const visibleReadyRepoIds = useMemo(
+    () =>
+      readyRepoIds.filter((id) => {
+        const outcome = latest.find((o) => o.repoId === id);
+        return !outcome || outcome.status === 'complete';
+      }),
+    [readyRepoIds, latest],
+  );
+
+  return { jobs, readyRepoIds: visibleReadyRepoIds };
 }
