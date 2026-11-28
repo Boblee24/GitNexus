@@ -29,6 +29,9 @@ export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => voi
   // Jobs that left the list but whose outcome lookup failed; retried next poll.
   const unconfirmedRef = useRef<ActiveAnalyzeJob[]>([]);
   const pausedUntilRef = useRef(0);
+  // Per repo, the start time of the job whose outcome the badge shows, so a
+  // late (retried) result from an older job can't overwrite a newer one.
+  const outcomeStartedAtRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     if (!enabled) return;
@@ -75,14 +78,22 @@ export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => voi
             }
             continue;
           }
+          const complete = final.status === 'complete';
           const repoId = final.repoId ?? job.repoId;
-          if (final.status !== 'complete') {
-            // The latest run failed or was cancelled: an earlier Ready no longer holds.
-            if (repoId) setReadyRepoIds((ids) => ids.filter((id) => id !== repoId));
-            continue;
+          const shownStartedAt = repoId ? outcomeStartedAtRef.current.get(repoId) : undefined;
+          // A retried result can arrive after a newer job's; the badge keeps the newest.
+          if (repoId && (shownStartedAt === undefined || job.startedAt >= shownStartedAt)) {
+            outcomeStartedAtRef.current.set(repoId, job.startedAt);
+            // A failed or cancelled latest run clears an earlier Ready.
+            setReadyRepoIds((ids) =>
+              complete
+                ? ids.includes(repoId)
+                  ? ids
+                  : [...ids, repoId]
+                : ids.filter((id) => id !== repoId),
+            );
           }
-          if (repoId) setReadyRepoIds((ids) => (ids.includes(repoId) ? ids : [...ids, repoId]));
-          onJobCompleteRef.current?.();
+          if (complete) onJobCompleteRef.current?.();
         }
       } finally {
         inFlight = false;

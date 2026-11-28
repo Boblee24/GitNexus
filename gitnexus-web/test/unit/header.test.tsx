@@ -503,6 +503,33 @@ describe('Header', () => {
       expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
     });
 
+    it('keeps a newer failure when an older success is only confirmed later', async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchActiveAnalyzeJobs)
+        .mockResolvedValueOnce([runningJob({ id: 'job-old', startedAt: 1 })])
+        .mockResolvedValueOnce([runningJob({ id: 'job-new', startedAt: 2 })])
+        .mockResolvedValue([]);
+      let oldLookups = 0;
+      vi.mocked(getAnalyzeStatus).mockImplementation(async (id) => {
+        if (id === 'job-new') return { ...runningJob({ id, startedAt: 2 }), status: 'failed' };
+        // The older job's lookup fails twice, so its success lands after the failure.
+        if (++oldLookups <= 2) throw new BackendError('Network down', 0, 'network');
+        return { ...runningJob({ id, startedAt: 1 }), status: 'complete' };
+      });
+      vi.mocked(fetchRepos).mockResolvedValue(repos());
+      render(<Header availableRepos={repos()} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /reels/i }));
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS * 2));
+      expect(getAnalyzeStatus).toHaveBeenCalledWith('job-new');
+      expect(oldLookups).toBe(2);
+
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
+
+      expect(oldLookups).toBe(3);
+      expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
+    });
+
     it('retries the outcome lookup after a transient failure and still shows Ready', async () => {
       vi.useFakeTimers();
       vi.mocked(fetchActiveAnalyzeJobs).mockResolvedValueOnce([runningJob()]).mockResolvedValue([]);
