@@ -180,7 +180,9 @@ test.describe('Analyze — failure, retry, cancel', () => {
     await page.getByTestId('local-path-input').fill(second);
     await page.getByRole('button', { name: /Analyze Repository/ }).click();
 
-    await expect(page.getByText(/already (active|in progress)/i)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/is still being analyzed|is stopping/i)).toBeVisible({
+      timeout: 20_000,
+    });
     await capture(page, testInfo, '11-lock-409');
     if (held.jobId) await waitForJob(url, held.jobId);
   });

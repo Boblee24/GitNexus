@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Header } from '../../src/components/Header';
@@ -472,6 +472,33 @@ describe('Header', () => {
       fireEvent.click(screen.getByRole('button', { name: /reels/i }));
       await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
 
+      expect(screen.queryByTestId('repo-status-analyzing')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
+    });
+
+    it('drops an earlier Ready when a newer analysis of the repo fails', async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchActiveAnalyzeJobs)
+        .mockResolvedValueOnce([runningJob({ id: 'job-ok' })])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([runningJob({ id: 'job-bad' })])
+        .mockResolvedValue([]);
+      vi.mocked(getAnalyzeStatus).mockImplementation(async (id) => ({
+        ...runningJob({ id }),
+        status: id === 'job-ok' ? 'complete' : 'failed',
+      }));
+      vi.mocked(fetchRepos).mockResolvedValue(repos());
+      render(<Header availableRepos={repos()} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /reels/i }));
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
+      expect(screen.getByTestId('repo-status-ready')).toBeInTheDocument();
+
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
+      expect(screen.getByTestId('repo-status-analyzing')).toBeInTheDocument();
+
+      await act(() => vi.advanceTimersByTimeAsync(ACTIVE_ANALYZE_POLL_MS));
+      expect(getAnalyzeStatus).toHaveBeenCalledWith('job-bad');
       expect(screen.queryByTestId('repo-status-analyzing')).not.toBeInTheDocument();
       expect(screen.queryByTestId('repo-status-ready')).not.toBeInTheDocument();
     });

@@ -57,8 +57,8 @@ export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => voi
         seenRef.current = current;
         unconfirmedRef.current = [];
         setJobs(current);
-        // A job that left the list either completed or failed; only a
-        // completed one is "ready".
+        // A job that left the list either completed or failed; Ready follows
+        // the repo's most recent outcome.
         for (const [index, job] of finished.entries()) {
           // Closed mid-loop: keep the rest for the next time polling starts.
           if (cancelled) {
@@ -75,8 +75,12 @@ export function useActiveAnalyzeJobs(enabled: boolean, onJobComplete?: () => voi
             }
             continue;
           }
-          if (final.status !== 'complete') continue;
           const repoId = final.repoId ?? job.repoId;
+          if (final.status !== 'complete') {
+            // The latest run failed or was cancelled: an earlier Ready no longer holds.
+            if (repoId) setReadyRepoIds((ids) => ids.filter((id) => id !== repoId));
+            continue;
+          }
           if (repoId) setReadyRepoIds((ids) => (ids.includes(repoId) ? ids : [...ids, repoId]));
           onJobCompleteRef.current?.();
         }
